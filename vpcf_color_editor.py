@@ -13,13 +13,13 @@ from tkinter import ttk
 from tkinter.ttk import Style, Progressbar
 from tkinter import simpledialog
 # **New Imports for Update Checking**
-import requests
+import urllib.request
 import threading
 import webbrowser
-from packaging import version
+
 
 # Version and Credit Information
-VERSION = "v1.15"
+VERSION = "v1.16"
 CREDIT = "Developed by MrSir"
 
 CONFIG_FILE = "config.json"
@@ -60,18 +60,50 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 # **New Function for Checking Updates**
-def check_for_updates(user_initiated=False):
+
+def fetch_latest_release():
     try:
         api_url = "https://api.github.com/repos/the-mrsir/VPCF-color-editor/releases/latest"
-        response = requests.get(api_url)
-        response.raise_for_status()
-        latest_release = response.json()
+        with urllib.request.urlopen(api_url) as response:
+            data = response.read()
+            encoding = response.info().get_content_charset('utf-8')
+            latest_release = json.loads(data.decode(encoding))
+            return latest_release
+    except Exception as e:
+        logging.error(f"An error occurred while fetching the latest release: {e}")
+        return None
+
+def is_newer_version(current_version, latest_version):
+    def normalize(v):
+        return [int(x) for x in re.sub(r'[^\d.]', '', v).split('.')]
+    return normalize(latest_version) > normalize(current_version)
+
+def prompt_update(latest_release, latest_version):
+    result = messagebox.askyesno(
+        "Update Available",
+        f"A new version ({latest_version}) is available.\n"
+        f"You are currently using version {VERSION}.\n\n"
+        "Do you want to download the latest version?",
+        parent=root
+    )
+    if result:
+        webbrowser.open(latest_release['html_url'])
+
+def check_for_updates(user_initiated=False):
+    try:
+        latest_release = fetch_latest_release()
+        if not latest_release:
+            if user_initiated:
+                root.after(0, lambda: messagebox.showerror(
+                    "Update Check Failed",
+                    "Could not retrieve the latest version information.",
+                    parent=root
+                ))
+            return
+
         latest_version = latest_release['tag_name']
 
-        current_version = version.parse(VERSION.lstrip('v'))
-        latest_version_parsed = version.parse(latest_version.lstrip('v'))
-
-        if latest_version_parsed > current_version:
+        if is_newer_version(VERSION, latest_version):
             # Schedule the GUI update in the main thread
             root.after(0, lambda: prompt_update(latest_release, latest_version))
         else:
@@ -92,7 +124,6 @@ def check_for_updates(user_initiated=False):
 
 def check_for_updates_async(user_initiated=False):
     threading.Thread(target=lambda: check_for_updates(user_initiated)).start()
-
 
 # Find .vpcf files
 def find_vpcf_files(folder_path):
