@@ -12,10 +12,14 @@ from tkinter import (
 from tkinter import ttk
 from tkinter.ttk import Style, Progressbar
 from tkinter import simpledialog
-
+# **New Imports for Update Checking**
+import requests
+import threading
+import webbrowser
+from packaging import version
 
 # Version and Credit Information
-VERSION = "v1.14"
+VERSION = "v1.15"
 CREDIT = "Developed by MrSir"
 
 CONFIG_FILE = "config.json"
@@ -55,6 +59,40 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+# **New Function for Checking Updates**
+def check_for_updates(user_initiated=False):
+    try:
+        api_url = "https://api.github.com/repos/the-mrsir/VPCF-color-editor/releases/latest"
+        response = requests.get(api_url)
+        response.raise_for_status()
+        latest_release = response.json()
+        latest_version = latest_release['tag_name']
+
+        current_version = version.parse(VERSION.lstrip('v'))
+        latest_version_parsed = version.parse(latest_version.lstrip('v'))
+
+        if latest_version_parsed > current_version:
+            # Schedule the GUI update in the main thread
+            root.after(0, lambda: prompt_update(latest_release, latest_version))
+        else:
+            if user_initiated:
+                root.after(0, lambda: messagebox.showinfo(
+                    "No Updates Available",
+                    f"You are using the latest version ({VERSION}).",
+                    parent=root
+                ))
+    except Exception as e:
+        logging.error(f"An error occurred while checking for updates: {e}")
+        if user_initiated:
+            root.after(0, lambda: messagebox.showerror(
+                "Update Check Failed",
+                f"An error occurred while checking for updates:\n{e}",
+                parent=root
+            ))
+
+def check_for_updates_async(user_initiated=False):
+    threading.Thread(target=lambda: check_for_updates(user_initiated)).start()
+
 
 # Find .vpcf files
 def find_vpcf_files(folder_path):
@@ -422,6 +460,8 @@ def show_gui(root, vpcf_files, parent_folder):
         about_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=about_menu)
         about_menu.add_command(label="About", command=lambda: messagebox.showinfo("About", f"VPCF Color Editor {VERSION}\n{CREDIT}"))
+        about_menu.add_command(label="Check for Updates", command=lambda: check_for_updates_async(user_initiated=True))
+
 
         current_theme = load_theme_preference()
         theme = themes[current_theme]
@@ -518,7 +558,7 @@ def show_gui(root, vpcf_files, parent_folder):
             except Exception as e:
                 logging.exception("An error occurred while reloading files.")
                 messagebox.showerror("Error", f"An error occurred while reloading files:\n{e}", parent=root)
-
+                
         # Left Pane for File Viewer
         left_frame = tk.Frame(paned_window, relief='groove', borderwidth=2)
         paned_window.add(left_frame, minsize=400)  # Set the minimum width of the file viewer
@@ -1100,6 +1140,8 @@ def show_gui(root, vpcf_files, parent_folder):
                 messagebox.showinfo("Navigation", "No more files in that direction.", parent=root)
 
         load_apply_to_all_fields()
+
+        # Buttons and other GUI elements setup
         frame_buttons = tk.Frame(right_frame)
         frame_buttons.grid(row=2, column=0, pady=5)
         frame_buttons.columnconfigure((0,1,2,3,4), weight=1)
@@ -1113,16 +1155,19 @@ def show_gui(root, vpcf_files, parent_folder):
         btn_next.grid(row=0, column=3, padx=5, sticky='ew')
         btn_reload = Button(frame_buttons, text='Select Folder', command=change_folder)
         btn_reload.grid(row=0, column=4, padx=5, sticky='ew')
+
         apply_button = Button(apply_frame, text='Apply to All', command=apply_to_all)
         apply_button.grid(row=2, column=0, pady=5, sticky='ew', padx=10)
         compile_all_button = Button(apply_frame, text='Compile All', command=compile_all_files)
         compile_all_button.grid(row=3, column=0, pady=5, sticky='ew', padx=10)
+
         if file_name_to_path:
             file_name = list(sorted(file_name_to_path.keys()))[0]
             selected_file.set(file_name)
             load_vpcf_file(file_name)
         else:
             lbl_current_file.config(text="No file selected.")
+
         left_frame.columnconfigure(0, weight=1)
         left_frame.rowconfigure(2, weight=1)
         right_frame.columnconfigure(0, weight=1)
@@ -1131,6 +1176,10 @@ def show_gui(root, vpcf_files, parent_folder):
         frame_colors.rowconfigure(0, weight=1)
         apply_frame.columnconfigure(0, weight=1)
         apply_frame.rowconfigure(1, weight=1)
+
+        # **Start the update check in the GUI function**
+        check_for_updates_async()
+
         root.mainloop()
     except Exception as e:
         logging.exception("An unexpected error occurred in the GUI.")
