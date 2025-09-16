@@ -19,12 +19,36 @@ import webbrowser
 
 
 # Version and Credit Information
-VERSION = "v1.17"
+VERSION = "v1.20"
 CREDIT = "Developed by MrSir"
 
 CONFIG_FILE = "config.json"
 compiler_path = [None]  # Placeholder for the compiler path
 folder_path = [None]  # Placeholder for the folder path
+
+# UI Constants
+DEFAULT_WINDOW_SIZE = "1200x700"
+MIN_WINDOW_SIZE = (1000, 600)
+FILE_WATCHER_INTERVAL = 2000  # milliseconds
+PROGRESS_BAR_LENGTH = 300
+
+# Color field constants
+SUPPORTED_COLOR_FIELDS = [
+    'm_ConstantColor', 'm_ColorFade', 'm_Color1', 'm_Color2',
+    'm_ColorTint', 'm_TintColor', 'm_ColorMin', 'm_ColorMax'
+]
+
+# Field name mappings
+FIELD_NAME_MAPPING = {
+    'm_ConstantColor': 'Base Color',
+    'm_ColorFade': 'Color Fade',
+    'm_Color1': 'Color 1',
+    'm_Color2': 'Color 2',
+    'm_ColorTint': 'Color Tint',
+    'm_TintColor': 'Tint Color',
+    'm_ColorMin': 'Color Min',
+    'm_ColorMax': 'Color Max',
+}
 
 
 gradient_pattern = re.compile(
@@ -42,6 +66,15 @@ stop_pattern = re.compile(
     r'(\{\s*m_flPosition\s*=\s*[\d\.]+\s*m_Color\s*=\s*\[\s*([\d,\s]+)\s*\]\s*\}\s*,?\s*)',
     re.IGNORECASE | re.DOTALL
 )
+
+# Compile scalar color pattern once at module level for better performance
+scalar_color_pattern = re.compile(
+    rf'(\b({"|".join(SUPPORTED_COLOR_FIELDS)})\s*=\s*\n?\s*)(\[\s*[\d\.,\s]*\s*\])',
+    re.IGNORECASE | re.MULTILINE | re.DOTALL
+)
+
+# File cache for performance optimization
+file_cache = {}  # {filepath: {'content': str, 'mtime': float, 'color_fields': list}}
 
 # Load and save configuration
 def load_config():
@@ -141,81 +174,150 @@ def find_vpcf_files(folder_path):
     logging.info(f"Total VPCF files found: {len(vpcf_files)}")
     return vpcf_files
 
-# Read a file
+# Read a file with caching
 def read_file(filename):
-    with open(filename, 'r') as f:
-        content = f.read()
-    return content
+    """
+    Read a file with caching and proper error handling.
+    
+    Args:
+        filename (str): Path to the file to read
+        
+    Returns:
+        str: File content, or empty string on error
+    """
+    try:
+        # Check if file exists and get modification time
+        if not os.path.exists(filename):
+            logging.error(f"File not found: {filename}")
+            return ""
+        
+        current_mtime = os.path.getmtime(filename)
+        
+        # Check cache first
+        if filename in file_cache:
+            cached_data = file_cache[filename]
+            if cached_data['mtime'] == current_mtime:
+                logging.debug(f"Using cached content for: {filename}")
+                return cached_data['content']
+        
+        # Read file and update cache
+        with open(filename, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        
+        file_cache[filename] = {
+            'content': content,
+            'mtime': current_mtime,
+            'color_fields': None  # Will be populated by find_color_fields
+        }
+        
+        logging.debug(f"Successfully read and cached file: {filename} ({len(content)} chars)")
+        return content
+        
+    except PermissionError:
+        logging.error(f"Permission denied reading file: {filename}")
+        return ""
+    except Exception as e:
+        logging.error(f"Error reading file {filename}: {e}")
+        return ""
 
 def find_color_fields(content, filename):
+    """
+    Find all color fields (scalar colors and gradients) in a VPCF file.
+    
+    Args:
+        content (str): The file content to search
+        filename (str): The filename for logging and error reporting
+        
+    Returns:
+        list: A list of color field dictionaries
+    """
     color_fields = []
-    # Regex patterns for colors
-    patterns = {
-        'color': re.compile(
-            r'(\b(m_ConstantColor|m_ColorFade|m_Color1|m_Color2|m_ColorTint|m_TintColor|m_ColorMin|m_ColorMax)\s*=\s*)(\[\s*[\d\.,\s]+\s*\])',
-            re.IGNORECASE | re.MULTILINE
-        ),
-    }
+    
+    if not content or not content.strip():
+        logging.warning(f"Empty or whitespace-only content in file: {filename}")
+        return color_fields
+    
+    logging.debug(f"Searching for color fields in file: {filename}")
+    logging.debug(f"File content length: {len(content)} characters")
 
     # Counters for gradient blocks and their stops
     gradient_block_counter = 0
 
-    # Mapping of internal names to user-friendly names
-    field_name_mapping = {
-        'm_ConstantColor': 'Base Color',
-        'm_ColorFade': 'Color Fade',
-        'm_Color1': 'Color 1',
-        'm_Color2': 'Color 2',
-        'm_ColorTint': 'Color Tint',
-        'm_TintColor': 'Tint Color',
-        'm_ColorMin': 'Color Min',
-        'm_ColorMax': 'Color Max',
-    }
+    # Use the global field name mapping
 
     # Find all gradients
-    for gradient_match in gradient_pattern.finditer(content):
-        gradient_block_counter += 1
-        prefix = gradient_match.group(1)
-        gradient_block = gradient_match.group(2)  # Gradient stops
-        suffix = gradient_match.group(3)
-        stop_index = 0
+    try:
+        for gradient_match in gradient_pattern.finditer(content):
+            gradient_block_counter += 1
+            prefix = gradient_match.group(1)
+            gradient_block = gradient_match.group(2)  # Gradient stops
+            suffix = gradient_match.group(3)
+            stop_index = 0
 
-        for stop_match in stop_pattern.finditer(gradient_block):
-            stop_position = stop_match.group(1)  # m_flPosition value
-            gradient_color = stop_match.group(2)  # m_Color value
-            is_non_empty = any(float(c) > 0 for c in re.findall(r'[\d\.]+', gradient_color))
+            for stop_match in stop_pattern.finditer(gradient_block):
+                try:
+                    stop_position = stop_match.group(1)  # m_flPosition value
+                    gradient_color = stop_match.group(2)  # m_Color value
+                    is_non_empty = any(float(c) > 0 for c in re.findall(r'[\d\.]+', gradient_color))
 
-            color_fields.append({
-                'type': 'gradient',
-                'start': gradient_match.start(),
-                'end': gradient_match.end(),
-                'value': gradient_color,
-                'stop_position': stop_position,
-                'full_match': stop_match.group(0),
-                'prefix': '',  # Gradients don’t need a prefix
-                'field_name': f'Gradient Block {gradient_block_counter} Stop {stop_index + 1}',
-                'filename': filename,
-                'is_non_empty': is_non_empty,
-                'gradient_block_index': gradient_block_counter,
-                'stop_index': stop_index
-            })
-            stop_index += 1
+                    color_fields.append({
+                        'type': 'gradient',
+                        'start': gradient_match.start(),
+                        'end': gradient_match.end(),
+                        'value': gradient_color,
+                        'stop_position': stop_position,
+                        'full_match': stop_match.group(0),
+                        'prefix': '',  # Gradients don't need a prefix
+                        'field_name': f'Gradient Block {gradient_block_counter} Stop {stop_index + 1}',
+                        'filename': filename,
+                        'is_non_empty': is_non_empty,
+                        'gradient_block_index': gradient_block_counter,
+                        'stop_index': stop_index
+                    })
+                    stop_index += 1
+                except Exception as e:
+                    logging.warning(f"Error processing gradient stop in {filename}: {e}")
+                    continue
+    except Exception as e:
+        logging.error(f"Error processing gradients in {filename}: {e}")
 
     # Find all scalar color fields
-    for match in patterns['color'].finditer(content):
-        raw_name = match.group(2)
-        display_name = field_name_mapping.get(raw_name, raw_name.replace('m_', '').replace('_', ' ').title())
-        color_fields.append({
-            'type': 'color',
-            'start': match.start(),
-            'end': match.end(),
-            'value': match.group(3),
-            'full_match': match.group(0),
-            'prefix': match.group(1),
-            'field_name': display_name,
-            'raw_name': raw_name,  # Add internal field name
-            'filename': filename,
-        })
+    scalar_count = 0
+    try:
+        for match in scalar_color_pattern.finditer(content):
+            try:
+                raw_name = match.group(2)
+                display_name = FIELD_NAME_MAPPING.get(raw_name, raw_name.replace('m_', '').replace('_', ' ').title())
+                logging.debug(f"Found scalar color field: {raw_name} -> {display_name}")
+                logging.debug(f"Match: {match.group(0)}")
+                
+                # Validate that we have a valid color array
+                color_value = match.group(3)
+                if not color_value or not color_value.strip():
+                    logging.warning(f"Empty color value for field {raw_name} in {filename}")
+                    continue
+                
+                color_fields.append({
+                    'type': 'color',
+                    'start': match.start(),
+                    'end': match.end(),
+                    'value': color_value,
+                    'full_match': match.group(0),
+                    'prefix': match.group(1),
+                    'field_name': display_name,
+                    'raw_name': raw_name,  # Add internal field name
+                    'filename': filename,
+                })
+                scalar_count += 1
+            except Exception as e:
+                logging.warning(f"Error processing scalar color field in {filename}: {e}")
+                continue
+    except Exception as e:
+        logging.error(f"Error processing scalar color fields in {filename}: {e}")
+    
+    gradient_count = len([f for f in color_fields if f['type'] == 'gradient'])
+    logging.info(f"Found {scalar_count} scalar color fields and {gradient_count} gradient fields in {filename}")
+    
     return color_fields
 
 def parse_color_string(color_string):
@@ -403,8 +505,8 @@ def show_gui(root, vpcf_files, parent_folder):
         current_theme = "light"  # Default theme
 
         root.title(f"VPCF Color Editor {VERSION} - {CREDIT}")
-        root.geometry('1200x700')
-        root.minsize(1000, 600)
+        root.geometry(DEFAULT_WINDOW_SIZE)
+        root.minsize(*MIN_WINDOW_SIZE)
         style = Style()
         style.theme_use('clam')
 
