@@ -19,7 +19,7 @@ import webbrowser
 
 
 # Version and Credit Information
-VERSION = "v1.20"
+VERSION = "v1.21"  # Updated version
 CREDIT = "Developed by MrSir"
 
 CONFIG_FILE = "config.json"
@@ -34,20 +34,42 @@ PROGRESS_BAR_LENGTH = 300
 
 # Color field constants
 SUPPORTED_COLOR_FIELDS = [
-    'm_ConstantColor', 'm_ColorFade', 'm_Color1', 'm_Color2',
-    'm_ColorTint', 'm_TintColor', 'm_ColorMin', 'm_ColorMax'
+    # Main color fields
+    'm_ConstantColor', 'm_ColorFade', 'm_ColorMin', 'm_ColorMax',
+    'm_Color', 'm_Color1', 'm_Color2', 'm_ColorTint', 'm_TintColor',
+    'm_TintMin', 'm_LiteralColor',
+    # Vector color fields
+    'm_vecColorScale', 'm_vColorBlend', 'm_vInterpOutput0', 'm_vInterpOutput1',
+    # Gradient fields
+    'm_Gradient', 'm_HeadColorScale', 'm_TailColorScale',
+    # Additional fields found in all.txt
+    'm_vecProjectedMaterials', 'm_OffsetMax', 'm_OffsetMin',
+    'm_vRandomMin', 'm_vRandomMax', 'm_vecNoiseOffsetRate',
+    'm_BoundingBoxMin', 'm_BoundingBoxMax', 'm_Gravity',
+    'm_vCPRelativePosition', 'm_vCPRelativeDir', 'm_vCPValueScale',
+    'm_vVectorAttributeScale', 'm_vecComponentScale', 'm_vecTexturesInput'
 ]
 
-# Field name mappings
+# Field name mapping for display
 FIELD_NAME_MAPPING = {
-    'm_ConstantColor': 'Base Color',
-    'm_ColorFade': 'Color Fade',
+    'm_ConstantColor': 'Base Color (Постоянный цвет)',
+    'm_ColorFade': 'Color Fade (Цвет затухания)',
+    'm_ColorMin': 'Color Min (Мин. цвет)',
+    'm_ColorMax': 'Color Max (Макс. цвет)',
+    'm_Color': 'Color (Цвет)',
     'm_Color1': 'Color 1',
     'm_Color2': 'Color 2',
     'm_ColorTint': 'Color Tint',
     'm_TintColor': 'Tint Color',
-    'm_ColorMin': 'Color Min',
-    'm_ColorMax': 'Color Max',
+    'm_TintMin': 'Tint Min',
+    'm_LiteralColor': 'Literal Color (Литеральный цвет)',
+    'm_vecColorScale': 'Color Scale (Масштаб цвета)',
+    'm_vColorBlend': 'Color Blend (Смешивание цвета)',
+    'm_vInterpOutput0': 'Interp Output 0',
+    'm_vInterpOutput1': 'Interp Output 1',
+    'm_Gradient': 'Gradient (Градиент)',
+    'm_HeadColorScale': 'Head Color Scale',
+    'm_TailColorScale': 'Tail Color Scale',
 }
 
 
@@ -178,10 +200,10 @@ def find_vpcf_files(folder_path):
 def read_file(filename):
     """
     Read a file with caching and proper error handling.
-    
+
     Args:
         filename (str): Path to the file to read
-        
+
     Returns:
         str: File content, or empty string on error
     """
@@ -190,29 +212,29 @@ def read_file(filename):
         if not os.path.exists(filename):
             logging.error(f"File not found: {filename}")
             return ""
-        
+
         current_mtime = os.path.getmtime(filename)
-        
+
         # Check cache first
         if filename in file_cache:
             cached_data = file_cache[filename]
             if cached_data['mtime'] == current_mtime:
                 logging.debug(f"Using cached content for: {filename}")
                 return cached_data['content']
-        
+
         # Read file and update cache
         with open(filename, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
-        
+
         file_cache[filename] = {
             'content': content,
             'mtime': current_mtime,
             'color_fields': None  # Will be populated by find_color_fields
         }
-        
+
         logging.debug(f"Successfully read and cached file: {filename} ({len(content)} chars)")
         return content
-        
+
     except PermissionError:
         logging.error(f"Permission denied reading file: {filename}")
         return ""
@@ -223,20 +245,20 @@ def read_file(filename):
 def find_color_fields(content, filename):
     """
     Find all color fields (scalar colors and gradients) in a VPCF file.
-    
+
     Args:
         content (str): The file content to search
         filename (str): The filename for logging and error reporting
-        
+
     Returns:
         list: A list of color field dictionaries
     """
     color_fields = []
-    
+
     if not content or not content.strip():
         logging.warning(f"Empty or whitespace-only content in file: {filename}")
         return color_fields
-    
+
     logging.debug(f"Searching for color fields in file: {filename}")
     logging.debug(f"File content length: {len(content)} characters")
 
@@ -290,13 +312,13 @@ def find_color_fields(content, filename):
                 display_name = FIELD_NAME_MAPPING.get(raw_name, raw_name.replace('m_', '').replace('_', ' ').title())
                 logging.debug(f"Found scalar color field: {raw_name} -> {display_name}")
                 logging.debug(f"Match: {match.group(0)}")
-                
+
                 # Validate that we have a valid color array
                 color_value = match.group(3)
                 if not color_value or not color_value.strip():
                     logging.warning(f"Empty color value for field {raw_name} in {filename}")
                     continue
-                
+
                 color_fields.append({
                     'type': 'color',
                     'start': match.start(),
@@ -314,10 +336,10 @@ def find_color_fields(content, filename):
                 continue
     except Exception as e:
         logging.error(f"Error processing scalar color fields in {filename}: {e}")
-    
+
     gradient_count = len([f for f in color_fields if f['type'] == 'gradient'])
     logging.info(f"Found {scalar_count} scalar color fields and {gradient_count} gradient fields in {filename}")
-    
+
     return color_fields
 
 def parse_color_string(color_string):
@@ -1244,8 +1266,8 @@ def show_gui(root, vpcf_files, parent_folder):
                     parent=root
                 )
 
-
         def compile_all_files():
+            """Compile all VPCF files in the current folder."""
             if not compiler_path[0]:
                 messagebox.showwarning(
                     "Compiler Path Not Set",
@@ -1254,91 +1276,91 @@ def show_gui(root, vpcf_files, parent_folder):
                 )
                 return
 
-            compiler_ = compiler_path[0]
-            failed_files = []
-            success_count = 0
-
-            if len(files_content) == 0:
-                messagebox.showinfo(
-                    "No Files to Compile",
-                    "No files available for compilation.",
-                    parent=root
-                )
-                return
-
+            # Create progress window
             progress_window = tk.Toplevel(root)
-            progress_window.title("Compiling Files")
-            progress_window.geometry("400x150")
-            progress_window.resizable(False, False)
+            progress_window.title("Compiling All Files")
+            progress_window.geometry("500x150")
+            progress_window.transient(root)
+            progress_window.grab_set()
 
-            Label(
-                progress_window,
-                text="Compiling files, please wait...",
-                font=("Arial", 12)
-            ).pack(pady=10)
+            # Center the progress window
+            progress_window.update_idletasks()
+            x = (progress_window.winfo_screenwidth() // 2) - (progress_window.winfo_width() // 2)
+            y = (progress_window.winfo_screenheight() // 2) - (progress_window.winfo_height() // 2)
+            progress_window.geometry(f'+{x}+{y}')
 
+            # Status label
+            status_label = tk.Label(progress_window, text="Preparing to compile...", pady=10)
+            status_label.pack()
+
+            # Progress bar
             progress_bar = ttk.Progressbar(
                 progress_window,
-                orient='horizontal',
+                length=400,
                 mode='determinate',
-                length=300
+                maximum=len(file_name_to_path)
             )
             progress_bar.pack(pady=10)
-            progress_bar['maximum'] = len(files_content)
 
-            progress_label = Label(progress_window, text="0 / 0", font=("Arial", 10))
+            # Progress text
+            progress_text = tk.StringVar()
+            progress_text.set(f"0/{len(file_name_to_path)} files compiled")
+            progress_label = tk.Label(progress_window, textvariable=progress_text)
             progress_label.pack()
 
-            root.attributes("-disabled", True)
+            def compile_thread():
+                """Background thread for compilation"""
+                compiler_ = compiler_path[0]
+                successful = 0
+                failed = 0
+                failed_files = []
 
-            def compile_files():
-                nonlocal success_count
-                try:
-                    for index, fn in enumerate(files_content.keys(), start=1):
-                        success, stdout_, stderr_ = global_compile_file(fn, file_name_to_path, compiler_)
-                        if success:
-                            success_count += 1
-                        else:
-                            failed_files.append(fn)
+                total_files = len(file_name_to_path)
+                for idx, (file_name, file_path) in enumerate(file_name_to_path.items()):
+                    # Update status
+                    status_label.config(text=f"Compiling: {file_name}")
+                    progress_bar['value'] = idx + 1
+                    progress_text.set(f"{idx + 1}/{total_files} files compiled")
+                    progress_window.update()
 
-                        progress_bar['value'] = index
-                        progress_label.config(text=f"{index} / {len(files_content)}")
-                        progress_window.update()
+                    try:
+                        if not os.path.exists(compiler_):
+                            raise FileNotFoundError(f"Compiler not found: {compiler_}")
 
-                    root.attributes("-disabled", False)
-                    progress_window.destroy()
-
-                    fail_count = len(failed_files)
-                    total = len(files_content)
-                    # Show a short summary
-                    if fail_count == 0:
-                        messagebox.showinfo(
-                            "Compilation Result",
-                            f"Compiled all {total} files successfully.",
-                            parent=root
+                        result = subprocess.run(
+                            [compiler_, file_path],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=30  # 30 second timeout per file
                         )
-                    else:
-                        messagebox.showwarning(
-                            "Compilation Result",
-                            f"Compiled {success_count}/{total} files successfully.\n"
-                            f"{fail_count} failed.\nSee log for details.",
-                            parent=root
-                        )
+                        successful += 1
+                        logging.info(f"Compiled successfully: {file_path}")
+                    except subprocess.CalledProcessError as e:
+                        failed += 1
+                        failed_files.append(file_name)
+                        logging.error(f"Compilation failed for {file_name}: {e}")
+                    except Exception as e:
+                        failed += 1
+                        failed_files.append(file_name)
+                        logging.error(f"Unexpected error compiling {file_name}: {e}")
 
-                except Exception as e:
-                    logging.exception("Error during compilation")
-                    messagebox.showerror(
-                        "Error",
-                        f"An error occurred during compilation.\nSee log for details.",
-                        parent=root
-                    )
-                    root.attributes("-disabled", False)
-                    progress_window.destroy()
+                # Compilation complete - show results
+                progress_window.destroy()
 
-            from threading import Thread
-            compile_thread = Thread(target=compile_files)
-            compile_thread.start()
+                result_message = f"Compilation Complete!\n\nSuccessfully compiled: {successful}\nFailed: {failed}"
+                if failed_files:
+                    result_message += f"\n\nFailed files:\n" + "\n".join(failed_files[:10])
+                    if len(failed_files) > 10:
+                        result_message += f"\n... and {len(failed_files) - 10} more"
 
+                if failed == 0:
+                    messagebox.showinfo("Compilation Success", result_message, parent=root)
+                else:
+                    messagebox.showwarning("Compilation Results", result_message, parent=root)
+
+            # Start compilation in background thread
+            threading.Thread(target=compile_thread, daemon=True).start()
 
         def set_compiler_path():
             path_ = filedialog.askopenfilename(title="Select Compiler Executable", parent=root)
@@ -1472,23 +1494,21 @@ def show_gui(root, vpcf_files, parent_folder):
         # Buttons under the color editor
         frame_buttons = tk.Frame(editor_frame)
         frame_buttons.grid(row=2, column=0, pady=5, sticky='ew')
-        frame_buttons.columnconfigure((0,1,2,3,4), weight=1)
+        frame_buttons.columnconfigure((0,1,2,3,4), weight=1)  # Added one more column for Compile All
 
         btn_previous = Button(frame_buttons, text='Previous', command=lambda: navigate_file(-1))
-        btn_previous.grid(row=0, column=0, padx=5, sticky='ew')
+        btn_previous.grid(row=0, column=0, padx=2, sticky='ew')
         save_button = Button(frame_buttons, text='Save Changes', command=save_changes)
-        save_button.grid(row=0, column=1, padx=5, sticky='ew')
+        save_button.grid(row=0, column=1, padx=2, sticky='ew')
         save_compile_button = Button(frame_buttons, text='Save and Compile', command=save_and_compile)
-        save_compile_button.grid(row=0, column=2, padx=5, sticky='ew')
+        save_compile_button.grid(row=0, column=2, padx=2, sticky='ew')
+        compile_all_button = Button(frame_buttons, text='Compile All', command=compile_all_files)
+        compile_all_button.grid(row=0, column=3, padx=2, sticky='ew')
         btn_next = Button(frame_buttons, text='Next', command=lambda: navigate_file(1))
-        btn_next.grid(row=0, column=3, padx=5, sticky='ew')
-        btn_reload = Button(frame_buttons, text='Select Folder', command=change_folder)
-        btn_reload.grid(row=0, column=4, padx=5, sticky='ew')
+        btn_next.grid(row=0, column=4, padx=2, sticky='ew')
 
         apply_button = Button(apply_frame, text='Apply to All', command=apply_to_all)
         apply_button.grid(row=2, column=0, pady=5, sticky='ew', padx=10)
-        compile_all_button = Button(apply_frame, text='Compile All', command=compile_all_files)
-        compile_all_button.grid(row=3, column=0, pady=5, sticky='ew', padx=10)
 
         # Menu bar
         menubar = Menu(root)
