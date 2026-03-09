@@ -97,6 +97,14 @@ Contributions are welcome! If you'd like to enhance the tool, fix bugs, or add f
 
 This project is licensed under the [MIT License](LICENSE).  
 ---
+## **Contact**  
 
+- **Developer:** [MrSir](https://github.com/the-mrsir)  
+- **Email:** wgbennett99@gmail.com  
+- **GitHub Repository:** [VPCF Color Editor](https://github.com/the-mrsir/VPCF-color-editor)  
+
+---
 ### **How to Improve This Project?**  
-If you have suggestions, feel free to open an [issue](https://github.com/MEMSITO/VPCF-deadlock-color-editor/issues).
+If you have suggestions, feel free to open an: 
+1) Original: [issue](https://github.com/the-mrsir/VPCF-color-editor/issues) or contact me directly!
+2) Fork: [issue](https://github.com/MEMSITO/VPCF-deadlock-color-editor/issues)

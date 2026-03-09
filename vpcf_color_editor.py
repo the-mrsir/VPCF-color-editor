@@ -559,6 +559,14 @@ def show_gui(root, vpcf_files, parent_folder):
         listbox_scrollbar = Scrollbar(left_frame, orient='vertical', command=listbox_files.yview)
         listbox_files.configure(yscrollcommand=listbox_scrollbar.set)
         listbox_scrollbar.grid(row=2, column=1, sticky='ns')
+        btn_downgrade = Button(
+            left_frame,
+            text="Downgrade VPCF Files",
+            command=lambda: downgrade_vpcf_files(parent_folder),
+            bg="#f44336", # Красный цвет для заметности
+            fg="white"
+        )
+        btn_downgrade.grid(row=3, column=0, sticky='ew', padx=5, pady=10)
 
         # ---------------------------------------------------------
         # Right side: Notebook with 2 tabs
@@ -1611,6 +1619,57 @@ def show_gui(root, vpcf_files, parent_folder):
         root.destroy()
         sys.exit(1)
 
+def downgrade_vpcf_files(current_folder):
+    if not current_folder or not os.path.exists(current_folder):
+        messagebox.showerror("Error", "Folder path is invalid.")
+        return
+
+    vpcf_files = []
+    for root_dir, dirs, files in os.walk(current_folder):
+        for file in files:
+            if file.lower().endswith('.vpcf'):
+                vpcf_files.append(os.path.join(root_dir, file))
+
+    if not vpcf_files:
+        messagebox.showinfo("Information", "No .vpcf files found.")
+        return
+
+    confirm = messagebox.askyesno(
+        "Confirm Downgrade",
+        f"This will modify {len(vpcf_files)} files in:\n{current_folder}\n\nDo you want to continue?"
+    )
+    if not confirm:
+        return
+
+    new_comment = '<!-- '+' kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d}'+' format:vpcf63:version{a6e6a69e-52d3-4527-8b9c-ff3bb91aca3e} -->'
+
+    pattern = r'^\s*<!--.*?-->'
+
+    modified_count = 0
+
+    try:
+        for file_path in vpcf_files:
+            backup_file(file_path)
+
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+
+            if re.search(pattern, content, re.DOTALL):
+                new_content = re.sub(pattern, new_comment, content, count=1, flags=re.DOTALL)
+
+                with open(file_path, 'w', encoding='utf-8', errors='replace') as f:
+                    f.write(new_content)
+                modified_count += 1
+                logging.info(f"Modified: {file_path}")
+            else:
+                logging.info(f"No comment found in: {file_path}")
+
+        messagebox.showinfo("Success", f"Processing complete!\nFiles found: {len(vpcf_files)}\nFiles modified: {modified_count}")
+        logging.info(f"Downgrade completed. {modified_count} files modified.")
+
+    except Exception as e:
+        logging.exception("Error during downgrade process")
+        messagebox.showerror("Error", f"An error occurred: {e}")
 
 def main():
     try:
