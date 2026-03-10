@@ -15,6 +15,7 @@ from tkinter import simpledialog
 # **New Imports for Update Checking**
 import urllib.request
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import webbrowser
 
 
@@ -1275,7 +1276,7 @@ def show_gui(root, vpcf_files, parent_folder):
                 )
 
         def compile_all_files():
-            """Compile all VPCF files in the current folder."""
+            """Compile all VPCF files in parallel using ThreadPoolExecutor"""
             if not compiler_path[0]:
                 messagebox.showwarning(
                     "Compiler Path Not Set",
@@ -1286,8 +1287,8 @@ def show_gui(root, vpcf_files, parent_folder):
 
             # Create progress window
             progress_window = tk.Toplevel(root)
-            progress_window.title("Compiling All Files")
-            progress_window.geometry("500x150")
+            progress_window.title("Compiling All Files (Parallel)")
+            progress_window.geometry("600x200")
             progress_window.transient(root)
             progress_window.grab_set()
 
@@ -1316,60 +1317,95 @@ def show_gui(root, vpcf_files, parent_folder):
             progress_label = tk.Label(progress_window, textvariable=progress_text)
             progress_label.pack()
 
+            # Detailed log
+            log_text = tk.Text(progress_window, height=4, width=70)
+            log_text.pack(pady=5)
+            scrollbar = tk.Scrollbar(progress_window, command=log_text.yview)
+            scrollbar.pack(side='right', fill='y')
+            log_text.config(yscrollcommand=scrollbar.set)
+
+            def update_log(message):
+                """Update log text in thread-safe way"""
+                def _update():
+                    log_text.insert(tk.END, message + "\n")
+                    log_text.see(tk.END)
+                progress_window.after(0, _update)
+
+            def compile_single_file(file_name, file_path):
+                """Compile a single file (to be run in thread pool)"""
+                try:
+                    if not os.path.exists(compiler_path[0]):
+                        return file_name, False, f"Compiler not found: {compiler_path[0]}"
+
+                    result = subprocess.run(
+                        [compiler_path[0], file_path],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=30  # 30 second timeout per file
+                    )
+                    return file_name, True, "Success"
+                except subprocess.CalledProcessError as e:
+                    return file_name, False, f"Compilation failed: {e.stderr[:100]}"
+                except Exception as e:
+                    return file_name, False, f"Error: {str(e)}"
+
             def compile_thread():
-                """Background thread for compilation"""
-                compiler_ = compiler_path[0]
+                """Background thread for parallel compilation"""
                 successful = 0
                 failed = 0
                 failed_files = []
-
                 total_files = len(file_name_to_path)
-                for idx, (file_name, file_path) in enumerate(file_name_to_path.items()):
-                    # Update status
-                    status_label.config(text=f"Compiling: {file_name}")
-                    progress_bar['value'] = idx + 1
-                    progress_text.set(f"{idx + 1}/{total_files} files compiled")
-                    progress_window.update()
 
-                    try:
-                        if not os.path.exists(compiler_):
-                            raise FileNotFoundError(f"Compiler not found: {compiler_}")
+                # Determine optimal number of workers (max 4 by default, but can be adjusted)
+                max_workers = min(4, total_files)  # Adjust this number based on your CPU
+                update_log(f"Starting parallel compilation with {max_workers} workers...")
 
-                        result = subprocess.run(
-                            [compiler_, file_path],
-                            check=True,
-                            capture_output=True,
-                            text=True,
-                            timeout=30  # 30 second timeout per file
-                        )
-                        successful += 1
-                        logging.info(f"Compiled successfully: {file_path}")
-                    except subprocess.CalledProcessError as e:
-                        failed += 1
-                        failed_files.append(file_name)
-                        logging.error(f"Compilation failed for {file_name}: {e}")
-                    except Exception as e:
-                        failed += 1
-                        failed_files.append(file_name)
-                        logging.error(f"Unexpected error compiling {file_name}: {e}")
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Submit all tasks
+                    future_to_file = {
+                        executor.submit(compile_single_file, file_name, file_path): file_name
+                        for file_name, file_path in file_name_to_path.items()
+                    }
+
+                    # Process completed tasks as they finish
+                    completed = 0
+                    for future in as_completed(future_to_file):
+                        file_name, success, message = future.result()
+                        completed += 1
+
+                        if success:
+                            successful += 1
+                            update_log(f"✅ {file_name}: {message}")
+                        else:
+                            failed += 1
+                            failed_files.append(file_name)
+                            update_log(f"❌ {file_name}: {message}")
+
+                        # Update progress
+                        progress_bar['value'] = completed
+                        progress_text.set(f"{completed}/{total_files} files compiled")
+                        status_label.config(text=f"Compiling: {file_name}")
+                        progress_window.update()
 
                 # Compilation complete - show results
-                progress_window.destroy()
+                def show_results():
+                    progress_window.destroy()
+                    result_message = f"Parallel Compilation Complete!\n\nSuccessfully compiled: {successful}\nFailed: {failed}"
+                    if failed_files:
+                        result_message += f"\n\nFailed files:\n" + "\n".join(failed_files[:10])
+                        if len(failed_files) > 10:
+                            result_message += f"\n... and {len(failed_files) - 10} more"
 
-                result_message = f"Compilation Complete!\n\nSuccessfully compiled: {successful}\nFailed: {failed}"
-                if failed_files:
-                    result_message += f"\n\nFailed files:\n" + "\n".join(failed_files[:10])
-                    if len(failed_files) > 10:
-                        result_message += f"\n... and {len(failed_files) - 10} more"
+                    if failed == 0:
+                        messagebox.showinfo("Compilation Success", result_message, parent=root)
+                    else:
+                        messagebox.showwarning("Compilation Results", result_message, parent=root)
 
-                if failed == 0:
-                    messagebox.showinfo("Compilation Success", result_message, parent=root)
-                else:
-                    messagebox.showwarning("Compilation Results", result_message, parent=root)
+                progress_window.after(0, show_results)
 
             # Start compilation in background thread
             threading.Thread(target=compile_thread, daemon=True).start()
-
         def set_compiler_path():
             path_ = filedialog.askopenfilename(title="Select Compiler Executable", parent=root)
             if path_:
